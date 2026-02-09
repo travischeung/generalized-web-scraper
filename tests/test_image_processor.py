@@ -40,7 +40,6 @@ def _write_html(path: Path, html: str) -> None:
 
 # --- Extract Image URLs (implemented) ---
 
-
 class TestExtractImageUrls(unittest.TestCase):
     """
     extract_image_urls: Collect candidate image URLs from HTML.
@@ -349,7 +348,7 @@ class TestExtractImageUrls(unittest.TestCase):
             path.unlink(missing_ok=True)
 
 
-# --- _is_valid_image_type (not implemented for this commit; image_processor line 182+) ---
+# --- _is_valid_image_type ---
 
 
 class TestIsValidImageType(unittest.TestCase):
@@ -400,7 +399,7 @@ class TestIsValidImageType(unittest.TestCase):
         self.assertFalse(_is_valid_image_type("https://example.com/image.tar.gz"))
 
 
-# --- _passes_quality (not implemented for this commit; image_processor line 182+) ---
+# --- _passes_quality ---
 
 
 class TestPassesQuality(unittest.TestCase):
@@ -452,7 +451,7 @@ class TestPassesQuality(unittest.TestCase):
         self.assertFalse(_passes_quality(0, 600))
 
 
-# --- filter_image_urls (not implemented for this commit; image_processor line 182+) ---
+# --- filter_image_urls ---
 
 
 class TestFilterImageUrls(unittest.IsolatedAsyncioTestCase):
