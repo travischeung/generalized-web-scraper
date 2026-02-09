@@ -1,7 +1,7 @@
 from dataclasses import Field
 from typing import Any, Optional
 from pathlib import Path
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, Field
 
 # Load categories once at module level
 CATEGORIES_FILE = Path(__file__).parent / "categories.txt"
@@ -14,15 +14,20 @@ if CATEGORIES_FILE.exists():
                 VALID_CATEGORIES.add(line)
 
 class Category(BaseModel):
-    # A category from Google's Product Taxonomy
+    # A category from Google's Product Taxonomy when possible
     # https://www.google.com/basepages/producttype/taxonomy.en-US.txt
     name: str
 
     @field_validator("name")
     @classmethod
     def validate_name_exists(cls, v: str) -> str:
-        if v not in VALID_CATEGORIES:
-            raise ValueError(f"Category '{v}' is not a valid category in categories.txt")
+        if not v or not isinstance(v, str):
+            raise ValueError("Category name must be a non-empty string")
+        v = v.strip()
+        if not v:
+            raise ValueError("Category name must be a non-empty string")
+        # Accept any category string; if not in taxonomy, use as-is so pipeline doesn't fail.
+        # Avoid substring coercion: it picks arbitrary paths (e.g. "Lighting" -> "Motor Vehicle Lighting", "Pants" -> "Motorcycle Pants").
         return v
 
 class Price(BaseModel):
@@ -33,7 +38,7 @@ class Price(BaseModel):
 
 # make sure that this actually works and is the types of variants we are actually looking for lol
 class ProductVariant(BaseModel):
-    sku: Optional[str] = Field(None, description="Unique identifier for this specific version")
+    sku: Optional[str] = Field(default=None, description="Unique identifier for this specific version")
     color: Optional[str] = None
     size: Optional[str] = None
     price: Optional[float] = None

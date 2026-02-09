@@ -115,13 +115,3 @@ async def responses(
         )
         _log_usage(response)
         return response
-
-
-
-
-###### TODO: ULTIMATELY I WANT THIS LOVELY TWO LINER TO HAND TO THE LLM BUT NOT TONIGHT. GOODNIGHT!
-# # Stage 1 & 2 running in parallel
-# context, media = await asyncio.gather(
-#     get_hybrid_context(path),
-#     get_filtered_media(path)
-# )

@@ -51,8 +51,8 @@ You are a Senior Data Integrity Agent. Your task is to reconcile raw web extract
 async def run_pipeline(html_path: str):
     path = Path(html_path)
     context, media = await asyncio.gather(
-        get_hybrid_context(path),
-        get_filtered_media(path)
+        asyncio.to_thread(get_hybrid_context, path),
+        get_filtered_media(path),
     )
     
     truth_sheet = context["truth_sheet"]
@@ -89,4 +89,5 @@ if __name__ == "__main__":
         if isinstance(result, BaseException):
             logging.error(f"Failed {path}: {result}")
         else:
-            logging.info(f"Result for {path}: {result}")
+            name = getattr(result, "name", str(result)[:50])
+            logging.info(f"Result for {path}: {name}")
