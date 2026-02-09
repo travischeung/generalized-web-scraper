@@ -1,6 +1,12 @@
 .env
 __pycache__/
 *.egg-info/
+*plan*
+debug.log
+.DS_Store
 
 # don't assume they're using UV
 uv.lock
+
+# API reads from here; export script writes here
+output/

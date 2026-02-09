@@ -1,5 +1,7 @@
 import ai
+import argparse
 import asyncio
+import json
 import logging
 from pathlib import Path
 from html_parser import get_hybrid_context
@@ -82,12 +84,37 @@ async def run_all_pipelines(html_paths: list[str]):
     return await asyncio.gather(*tasks, return_exceptions=True)
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run product extraction pipeline on data/*.html")
+    parser.add_argument(
+        "--export",
+        type=str,
+        metavar="PATH",
+        help="Write successful products to JSON (e.g. output/products.json) with an 'id' per product",
+    )
+    args = parser.parse_args()
+
     logging.basicConfig(level=logging.INFO)
     sample_files = [str(file_path) for file_path in Path("data").glob("*.html")]
     results = asyncio.run(run_all_pipelines(sample_files))
+
     for path, result in zip(sample_files, results):
         if isinstance(result, BaseException):
             logging.error(f"Failed {path}: {result}")
         else:
             name = getattr(result, "name", str(result)[:50])
             logging.info(f"Result for {path}: {name}")
+
+    if args.export:
+        products = [
+            res for res in results
+            if not isinstance(res, BaseException) and isinstance(res, Product)
+        ]
+        out_path = Path(args.export)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = []
+        for i, p in enumerate(products):
+            d = p.model_dump()
+            d["id"] = i
+            payload.append(d)
+        out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        logging.info(f"Exported {len(payload)} products to {out_path}")
