@@ -20,13 +20,19 @@ export default function ProductDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedSize, setSelectedSize] = useState<string | null>(null);
+  const [selectedColor, setSelectedColor] = useState<string | null>(null);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
 
   useEffect(() => {
     if (productId == null) return;
     fetch(`${API_URL}/products/${productId}`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
-      .then((data: Product) => setProduct(data))
+      .then((data: Product) => {
+        setProduct(data);
+        const variantColors = (data.variants ?? []).map((v) => v.color).filter((c): c is string => Boolean(c));
+        const colors = [...new Set([...(data.colors ?? []), ...variantColors])];
+        setSelectedColor(colors[0] ?? null);
+      })
       .catch((err) => setError(err.message ?? "Failed to load product"))
       .finally(() => setLoading(false));
   }, [productId]);
@@ -36,12 +42,14 @@ export default function ProductDetailPage() {
   if (!product) return null;
 
   const imageUrls = product.image_urls ?? [];
-  const sizes =
-    product.variants
-      ?.map((v) => v.size)
-      .filter((s): s is string => Boolean(s)) ?? [];
+  const variants = product.variants ?? [];
+  const sizes = variants.map((v) => v.size).filter((s): s is string => Boolean(s));
   const hasSizes = sizes.length > 0;
-  const colorName = product.colors?.[0] ?? product.variants?.[0]?.color ?? null;
+  const colorOptions = [...new Set((product.colors ?? []).concat(variants.map((v) => v.color).filter((c): c is string => Boolean(c))))];
+  const hasColors = colorOptions.length > 0;
+  const selectedVariant = selectedColor ? variants.find((v) => v.color === selectedColor) : null;
+  const variantImageUrl = selectedVariant?.image_url ?? null;
+  const displayImageUrl = variantImageUrl ?? imageUrls[selectedImageIndex] ?? imageUrls[0];
 
   return (
     <div className="pdp-content">
@@ -50,9 +58,9 @@ export default function ProductDetailPage() {
         {/* Left: Product imagery */}
         <div className="pdp-images">
           <div className="pdp-image-main-wrap">
-            {imageUrls.length > 0 ? (
+            {(displayImageUrl || imageUrls.length > 0) ? (
               <img
-                src={`${API_URL}/image?url=${encodeURIComponent(imageUrls[selectedImageIndex] ?? imageUrls[0])}`}
+                src={`${API_URL}/image?url=${encodeURIComponent(displayImageUrl ?? imageUrls[0])}`}
                 alt=""
                 className="pdp-image-main"
                 onError={(e) => (e.currentTarget.style.display = "none")}
@@ -61,7 +69,7 @@ export default function ProductDetailPage() {
               <div className="pdp-image-placeholder">No image</div>
             )}
           </div>
-          {imageUrls.length > 1 && (
+          {imageUrls.length > 1 && !variantImageUrl && (
             <div className="pdp-image-thumbs">
               {imageUrls.slice(0, 4).map((url, i) => (
                 <button
@@ -83,11 +91,26 @@ export default function ProductDetailPage() {
 
         {/* Right: Product details */}
         <div className="pdp-details">
-          {colorName && (
-            <p className="pdp-color">{colorName}</p>
+          <h1 className="pdp-title">{product.name ?? "Untitled"}</h1>
+
+          {hasColors && (
+            <div className="pdp-color-section">
+              <label className="pdp-color-label">Color:</label>
+              <div className="pdp-color-buttons">
+                {colorOptions.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    className={`pdp-color-btn ${selectedColor === color ? "pdp-color-btn-active" : ""}`}
+                    onClick={() => setSelectedColor(color)}
+                  >
+                    {color}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
 
-          <h1 className="pdp-title">{product.name ?? "Untitled"}</h1>
 
           <div className="pdp-price-row">
             <span className="pdp-price">{formatPrice(product)}</span>

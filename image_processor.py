@@ -26,8 +26,8 @@ if TYPE_CHECKING:
     from models import Product
 
 
-# Product-quality criteria per plan: ~1:1 aspect, both sides ≥ 500px, valid image types.
-MIN_SIDE = 500
+# Product-quality criteria per plan: ~1:1 aspect, both sides ≥ 1000px, valid image types.
+MIN_SIDE = 1000
 ASPECT_LOW, ASPECT_HIGH = 0.8, 1.25  # aspect ratio tolerance around 1:1
 VALID_IMAGE_TYPES = {"jpeg", "jpg", "png", "webp"}
 
@@ -328,6 +328,7 @@ async def get_filtered_media(html_path: Path, base_url: Optional[str] = None) ->
     """
     candidate_urls, metadata_by_url = _collect_image_urls_and_metadata(html_path, base_url=base_url)
     candidate_urls = _drop_non_product_urls(candidate_urls)
+    candidate_urls = _dedupe_images(candidate_urls)
     if not candidate_urls:
         return {"images": [], "candidates": [], "candidate_metadata": []}
     filtered_images = await filter_image_urls(candidate_urls)
@@ -338,4 +339,3 @@ async def get_filtered_media(html_path: Path, base_url: Optional[str] = None) ->
             {"url": u, "hint": metadata_by_url.get(u, "")} for u in candidate_urls
         ],
     }
-    
