@@ -10,3 +10,14 @@ uv.lock
 
 # API reads from here; export script writes here
 output/
+
+# Frontend / Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
