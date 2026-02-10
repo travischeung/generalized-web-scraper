@@ -8,33 +8,121 @@ body {
 }
 
 .app {
-  padding: 1.5rem;
-  max-width: 1200px;
-  margin: 0 auto;
+  padding: 0;
+  width: 100%;
+  min-height: 100vh;
+}
+
+.app > .title,
+.app > .grid {
+  padding-left: clamp(1rem, 4vw, 2rem);
+  padding-right: clamp(1rem, 4vw, 2rem);
+}
+
+.app > .title {
+  padding-top: 1.5rem;
+}
+
+.app > .grid {
+  padding-bottom: 2rem;
+}
+
+/* Header: two stacked banners like A Day's March */
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  width: 100%;
+}
+
+.header-promo {
+  background: #2c3e50;
+  color: #fff;
+  text-align: center;
+  padding: 0.5rem 1rem 0.6rem;
+}
+
+.header-promo-text {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.header-promo-links {
+  margin: 0.25rem 0 0;
+  font-size: 0.8rem;
+}
+
+.header-promo-links a {
+  color: #7eb8da;
+  text-decoration: none;
+}
+
+.header-promo-links a:hover {
+  text-decoration: underline;
+}
+
+.header-promo-sep {
+  margin: 0 0.5rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.header-main {
+  background: #3d5a80;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem clamp(1rem, 4vw, 2rem);
+}
+
+.header-brand {
+  margin: 0.75rem 0;
+  font-size: clamp(1rem, 2.5vw, 1.25rem);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #fff;
 }
 
 .title {
   margin: 0 0 1.5rem;
-  font-size: 1.5rem;
+  font-size: clamp(1.25rem, 3vw, 1.5rem);
 }
 
+/* Full-width responsive grid: slightly larger min so cards feel more spacious */
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
+  gap: clamp(0.75rem, 2vw, 1.5rem);
+  width: 100%;
 }
 
 .card {
+  display: flex;
+  flex-direction: column;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  padding: 0.75rem;
+}
+
+.card-image-wrap {
   position: relative;
   aspect-ratio: 1;
+  width: 100%;
+  background: #f5f5f5;
   border-radius: 4px;
   overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .card-placeholder {
   position: absolute;
   inset: 0;
-  background: #bdbdbd;
+  background: #e0e0e0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -52,4 +140,31 @@ body {
   height: 100%;
   object-fit: cover;
   display: block;
+  transition: filter 0.2s ease;
+}
+
+.card-image-wrap:hover .card-image {
+  filter: blur(4px);
+}
+
+.card-body {
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.card-title {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #1a1a1a;
+}
+
+.card-price {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 400;
+  color: #666;
 }
