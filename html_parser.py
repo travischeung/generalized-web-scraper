@@ -42,6 +42,81 @@ def _norm_float(val):
     except (TypeError, ValueError):
         return None
 
+def _extract_product_from_embedded(data: dict) -> dict:
+    """
+    Extract product-like data from embedded JSON (Next.js, Nuxt, or heuristic).
+    Returns dict with colors, variants, image_urls (only non-empty fields).
+    """
+    result: dict = {"colors": [], "variants": [], "image_urls": []}
+
+    # Next.js: props.pageProps or props.__N_PAGE_PROPS__
+    props = data.get("props") or {}
+    page_props = props.get("pageProps") or props.get("__N_PAGE_PROPS__") or props
+    if page_props and isinstance(page_props, dict):
+        _harvest_colorway_images(page_props, result)
+
+    # Nuxt: data or data.data
+    nuxt = data.get("data")
+    if isinstance(nuxt, dict):
+        _harvest_colorway_images(nuxt.get("data", nuxt) if isinstance(nuxt.get("data"), dict) else nuxt, result)
+
+    # Heuristic: recursive search for product-like keys
+    if not result["colors"] and not result["variants"] and not result["image_urls"]:
+        _heuristic_search(data, result, depth=0, max_depth=4)
+
+    return {k: v for k, v in result.items() if v}
+
+def _harvest_colorway_images(obj: dict, out: dict) -> None:
+    """Extract from colorwayImages (Nike-style) or similar structures."""
+    colorways = obj.get("colorwayImages") or obj.get("colorways") or obj.get("variants") or []
+    if not isinstance(colorways, list):
+        return
+    for cw in colorways:
+        if not isinstance(cw, dict):
+            continue
+        color = (cw.get("colorDescription") or cw.get("color") or cw.get("name")) and str(cw.get("colorDescription") or cw.get("color") or cw.get("name", "")).strip()
+        im = cw.get("image")
+        img = cw.get("squarishImg") or cw.get("portraitImg") or (im.get("url") or im.get("contentUrl") if isinstance(im, dict) else im)
+        img = img.strip() if isinstance(img, str) else None
+        if color and color not in out["colors"]:
+            out["colors"].append(color)
+        if img and img not in out["image_urls"]:
+            out["image_urls"].append(img)
+        out["variants"].append({
+            "sku": cw.get("sku") or cw.get("id") or None,
+            "color": color or None,
+            "size": None,
+            "price": _norm_float(cw.get("price")),
+            "image_url": img,
+        })
+
+_PRODUCT_KEYS = frozenset({"colorDescription", "colorwayImages", "color", "variants", "hasVariant", "products", "productGroups", "image", "images"})
+
+def _heuristic_search(obj: dict, out: dict, depth: int, max_depth: int) -> None:
+    """Recursively search for product-like keys; harvest when found."""
+    if depth >= max_depth or not isinstance(obj, dict):
+        return
+    for key, val in obj.items():
+        if key not in _PRODUCT_KEYS:
+            continue
+        if key in ("colorwayImages", "colorways", "variants", "hasVariant", "products"):
+            if isinstance(val, list) and val and isinstance(val[0], dict):
+                _harvest_colorway_images({"colorwayImages": val}, out)
+        elif key in ("color", "colorDescription") and val:
+            s = str(val).strip()
+            if s and s not in out["colors"]:
+                out["colors"].append(s)
+        elif key in ("image", "images"):
+            for u in _to_list(val):
+                u = u if isinstance(u, str) else (u.get("url") or u.get("contentUrl") if isinstance(u, dict) else None)
+                if u and isinstance(u, str) and u.strip() and u not in out["image_urls"]:
+                    out["image_urls"].append(u.strip())
+        if isinstance(val, dict):
+            _heuristic_search(val, out, depth + 1, max_depth)
+        elif isinstance(val, list) and val and isinstance(val[0], dict):
+            for item in val[:10]:
+                _heuristic_search(item, out, depth + 1, max_depth)
+
 # Pick out the high value metadata before the heuristic distillation process.
 def extract_metadata(html_path: Path) -> dict:
     """
@@ -52,6 +127,7 @@ def extract_metadata(html_path: Path) -> dict:
     soup = BeautifulSoup(html_content, "html.parser")
     output: dict = {
         "json_ld": [],
+        "embedded_json": [],
         "meta": {},
         "product_attributes": {},
     }
@@ -68,6 +144,18 @@ def extract_metadata(html_path: Path) -> dict:
                 output["json_ld"].extend(data)
             else:
                 output["json_ld"].append(data)
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    # Embedded JSON: Next.js, Nuxt, and other application/json scripts.
+    for script in soup.find_all("script", type="application/json"):
+        raw = script.string
+        if not raw or not raw.strip():
+            continue
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                output["embedded_json"].append(data)
         except (json.JSONDecodeError, TypeError):
             continue
 
@@ -260,6 +348,24 @@ def get_hybrid_context(html_path: Path) -> dict:
             "price": truth_sheet["price"]["price"] if isinstance(truth_sheet.get("price"), dict) else None,
             "image_url": truth_sheet["image_urls"][0] if truth_sheet["image_urls"] else None,
         })
+
+    # Merge embedded JSON (Next.js, Nuxt, heuristic) into truth_sheet when fields are empty
+    for emb in raw_meta.get("embedded_json") or []:
+        extracted = _extract_product_from_embedded(emb)
+        if not extracted.get("image_urls") and not extracted.get("colors") and not extracted.get("variants"):
+            continue
+        if not truth_sheet["colors"] and extracted.get("colors"):
+            truth_sheet["colors"] = extracted["colors"]
+        if not truth_sheet["variants"] and extracted.get("variants"):
+            truth_sheet["variants"] = extracted["variants"]
+        if not truth_sheet["image_urls"] and extracted.get("image_urls"):
+            truth_sheet["image_urls"] = extracted["image_urls"]
+        elif extracted.get("image_urls"):
+            for u in extracted["image_urls"]:
+                if u and u not in truth_sheet["image_urls"]:
+                    truth_sheet["image_urls"].append(u)
+    truth_sheet["image_urls"] = _drop_non_product_urls(truth_sheet["image_urls"])
+
     return {
         "truth_sheet": truth_sheet,
         "md_content": md_content,
