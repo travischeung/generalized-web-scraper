@@ -36,6 +36,14 @@ class Price(BaseModel):
     # If a product is on sale, this is the original price
     compare_at_price: float | None = None
 
+    @field_validator("currency")
+    @classmethod
+    def default_currency(cls, v: str | None) -> str:
+        """Default empty or missing currency to USD so frontend and APIs stay valid."""
+        if not v or not isinstance(v, str) or not v.strip():
+            return "USD"
+        return v.strip()
+
 # make sure that this actually works and is the types of variants we are actually looking for lol
 class ProductVariant(BaseModel):
     sku: Optional[str] = Field(default=None, description="Unique identifier for this specific version")

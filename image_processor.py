@@ -14,7 +14,7 @@ import logging
 import json
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Tuple
+from typing import TYPE_CHECKING, Optional, Tuple
 
 import aiohttp
 from PIL import Image
@@ -93,64 +93,98 @@ def _dedupe_images(urls: list[str]) -> list[str]:
                 best_candidates[identity] = url
     return list[str](best_candidates.values())
 
-# --- Image processing --- 
+# --- Image processing ---
 
-def extract_image_urls(html_path: Path, base_url: Optional[str] = None) -> list[str]:
+def _collect_image_urls_and_metadata(
+    html_path: Path, base_url: Optional[str] = None
+) -> tuple[list[str], dict[str, str]]:
     """
-    Collect candidate image URLs from HTML for downstream filtering.
-    Sources per plan: <img> (src, data-src, srcset, data-srcset), meta (og:image, twitter:image)
-    Base URL from <base href> or caller.
+    Single-pass HTML traversal to collect:
+      - candidate image URLs
+      - lightweight per-image hints (alt text, meta source, json-ld origin)
+
+    Public helpers `extract_image_urls` and `extract_image_metadata` build on top
+    of this to keep responsibilities clear and the API small.
     """
     html_content = html_path.read_text(encoding="utf-8", errors="replace")
     soup = BeautifulSoup(html_content, "html.parser")
     base = base_url
-    # If no base_url is provided, search for a base_url within the html itself.
     if not base:
         base_tag = soup.find("base", attrs={"href": True})
         if base_tag:
             base = base_tag.get("href")
-    seen: set[str] = set[str]()
-    urls: list[str] = []
-    
-    # Helper to dedupe images and ensure urls are properly formatted before being added to list of valid image urls.
-    def add(url_candidate: str) -> None:
-        url_candidate = _normalize_url(url_candidate, base)
-        # Exclude unresolved relative URLs to avoid extraneous entries and optimize token usage.
-        if not url_candidate.startswith(("http://", "https://", "//")):
-            return
-        if url_candidate and url_candidate not in seen and urlparse(url_candidate).path.strip("/"):
-            seen.add(url_candidate)
-            urls.append(url_candidate)
 
-    # Start with <img src> tags, srcset, data-src, data-srcset.
+    seen: set[str] = set()
+    urls: list[str] = []
+    hints: dict[str, str] = {}
+
+    def add_url(raw_url: str) -> Optional[str]:
+        """Normalize and register a URL, returning the normalized value or None."""
+        url = _normalize_url(raw_url, base)
+        if not url.startswith(("http://", "https://", "//")):
+            return None
+        if not urlparse(url).path.strip("/"):
+            return None
+        if url not in seen:
+            seen.add(url)
+            urls.append(url)
+        return url
+
+    def add_hint(raw_url: str, label: str) -> None:
+        """Attach a human-ish label to a URL for LLM reasoning."""
+        if not label:
+            return
+        url = _normalize_url(raw_url, base)
+        if not url.startswith(("http://", "https://", "//")):
+            return
+        if not urlparse(url).path.strip("/"):
+            return
+        label = label.strip()
+        if not label:
+            return
+        prev = hints.get(url)
+        if not prev:
+            hints[url] = label
+        elif label not in prev:
+            hints[url] = f"{prev}; {label}"
+
+    # <img> tags: collect URLs plus alt-text hints when available.
     for img in soup.find_all("img"):
+        alt_text = img.get("alt") or ""
         for attr in ("src", "data-src", "data-lazy-src", "data-original"):
             img_url = img.get(attr)
-            if img_url:
-                add(img_url)
+            if not img_url:
+                continue
+            normalized = add_url(img_url)
+            if alt_text and normalized:
+                add_hint(normalized, alt_text)
         for attr in ("srcset", "data-srcset"):
             img_url = img.get(attr)
-            if img_url:
-                best_url = _parse_best_from_srcset(img_url)
-                if best_url:
-                    add(best_url)
+            if not img_url:
+                continue
+            best_url = _parse_best_from_srcset(img_url)
+            if best_url:
+                normalized = add_url(best_url)
+                if alt_text and normalized:
+                    add_hint(normalized, alt_text)
 
-    # Next, search for image urls inside of metadata tags. 
+    # Meta tags: og:image / twitter:image
     for meta in soup.find_all("meta"):
         key = (meta.get("property") or meta.get("name") or "").strip().lower()
         if key in ("og:image", "og:image:secure_url", "twitter:image"):
             img_url = meta.get("content")
             if img_url:
-                add(img_url)
+                normalized = add_url(img_url)
+                if normalized:
+                    add_hint(normalized, key)
 
-    # Finally, search through structured data (json-ld) for img urls.
+    # JSON-LD images: also mark as coming from structured data.
     for script in soup.find_all("script", type="application/ld+json"):
         raw = script.string
         if not raw or not raw.strip():
             continue
         try:
             data = json.loads(raw)
-            # JSON-LD will either be a dict or a list of dicts. If not, continue.
             if isinstance(data, list):
                 items = [x for x in data if isinstance(x, dict)]
             elif isinstance(data, dict):
@@ -163,25 +197,28 @@ def extract_image_urls(html_path: Path, base_url: Optional[str] = None) -> list[
                     val = item.get(key)
                     if val is None:
                         continue
-                    # If value is a single url string, just add the string.
                     if isinstance(val, str):
-                        add(val)
-                        continue
-                    # If value is ImageObject: e.g. "image": {"@type": "ImageObject", "url": "https://..."}
-                    if isinstance(val, dict) and "url" in val:
-                        add(val["url"])
-                        continue
-                    # If value is a list, add each url string in the list.
-                    if isinstance(val, list):
+                        normalized = add_url(val)
+                        if normalized:
+                            add_hint(normalized, "json-ld image")
+                    elif isinstance(val, dict) and "url" in val:
+                        normalized = add_url(val["url"])
+                        if normalized:
+                            add_hint(normalized, "json-ld image")
+                    elif isinstance(val, list):
                         for v in val:
                             if isinstance(v, str):
-                                add(v)
+                                normalized = add_url(v)
+                                if normalized:
+                                    add_hint(normalized, "json-ld image")
                             elif isinstance(v, dict) and "url" in v:
-                                add(v["url"])
+                                normalized = add_url(v["url"])
+                                if normalized:
+                                    add_hint(normalized, "json-ld image")
         except (json.JSONDecodeError, TypeError):
             continue
 
-    return _dedupe_images(urls)
+    return (urls, hints)
 
 # --- Async image filtering ---
 
@@ -257,9 +294,8 @@ async def filter_image_urls(
     return await run()
 
 
-# Path substrings that indicate non-product assets (email, banner, promo). Never considered as candidates.
 # Case-insensitive; edit here to add/remove. Used so we never fetch or pass these to the model.
-NON_PRODUCT_PATH_SUBSTRINGS = ("email_sign_up", "EMAILprompt", "sign_up", "banner", "promo")
+NON_PRODUCT_PATH_SUBSTRINGS = ("email_sign_up", "EMAILprompt", "sign_up", "banner", "promo", "logo")
 
 
 def _drop_non_product_urls(
@@ -290,30 +326,16 @@ async def get_filtered_media(html_path: Path, base_url: Optional[str] = None) ->
         candidates: All URLs that passed the path filter, before dimension check. Passed to the LLM
                     so it can reason over them when verified is empty (e.g. og:image that failed fetch).
     """
-    candidate_urls = extract_image_urls(html_path, base_url=base_url)
+    candidate_urls, metadata_by_url = _collect_image_urls_and_metadata(html_path, base_url=base_url)
     candidate_urls = _drop_non_product_urls(candidate_urls)
     if not candidate_urls:
-        return {"images": [], "candidates": []}
+        return {"images": [], "candidates": [], "candidate_metadata": []}
     filtered_images = await filter_image_urls(candidate_urls)
     return {
         "images": filtered_images,
         "candidates": candidate_urls,
+        "candidate_metadata": [
+            {"url": u, "hint": metadata_by_url.get(u, "")} for u in candidate_urls
+        ],
     }
-
-# --- Product image URL normalization (single concern: image URL list quality) ---
-
-def normalize_product_image_urls(product: "Product") -> "Product":
-    """
-    Backfill image_urls from variant image_url when empty; then drop any URL whose
-    path looks like non-product (email, banner, etc.).
-    """
-    urls = list(product.image_urls or [])
-    if not urls and product.variants:
-        seen = set()
-        for v in product.variants:
-            u = getattr(v, "image_url", None)
-            if u and u not in seen:
-                seen.add(u)
-                urls.append(u)
-    urls = _drop_non_product_urls(urls)
-    return product.model_copy(update={"image_urls": urls})
+    

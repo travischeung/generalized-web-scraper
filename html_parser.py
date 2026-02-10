@@ -122,7 +122,7 @@ def extract_distilled_content(html_path: Path) -> str:
 def get_hybrid_context(html_path: Path) -> dict:
     """
     Unified entrypoint for stage 1 of pipeline.
-    Returns a dict with 'truth_sheet' (anchors for a "soft" pre-hydration) and 'markdown' (context for LLM reasoning)
+    Returns a dict with 'truth_sheet', 'md_content', and 'product_json_ld'
     """
     raw_meta = extract_metadata(html_path)
     md_content = extract_distilled_content(html_path)
@@ -260,11 +260,8 @@ def get_hybrid_context(html_path: Path) -> dict:
             "price": truth_sheet["price"]["price"] if isinstance(truth_sheet.get("price"), dict) else None,
             "image_url": truth_sheet["image_urls"][0] if truth_sheet["image_urls"] else None,
         })
-        
-    # Final pruning to ensure the Truth Sheet is strictly factual and token-efficient
-    truth_sheet = {k: v for k, v in truth_sheet.items() if v not in [None, [], {}]}
-
     return {
         "truth_sheet": truth_sheet,
-        "md_content": md_content
+        "md_content": md_content,
+        "product_json_ld": json_ld_list
     }

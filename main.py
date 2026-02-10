@@ -7,7 +7,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from html_parser import get_hybrid_context
-from image_processor import get_filtered_media, normalize_product_image_urls
+from image_processor import get_filtered_media
 from models import Product, DEFAULT_PRODUCT
 
 ai_instructions = """
@@ -15,16 +15,20 @@ ai_instructions = """
 You are a Senior Data Integrity Agent. Your task is to reconcile raw web extraction data into a single, high-fidelity JSON Product Object.
 
 # Inputs
-1. **Truth Sheet (Deterministic)**: Extracted directly from Schema.org JSON-LD. This is the primary source for pricing and identifiers.
-2. **Product Context (Markdown)**: Distilled main content of the page. Use this to verify features, materials, and descriptions.
-3. **Verified Media**: Image URLs that passed quality gates (dimensions, aspect). Prefer these for image_urls.
-4. **Image Candidates**: All page image URLs that passed the non-product path filter (og:image, img tags, etc.). Use this list when Verified Media is empty so you can still pick a product image (e.g. og:image). Prefer product shots; exclude marketing, banner, or email-signup imagery.
+1. **Truth Sheet**: Structured data from Schema.org JSON-LD (when present). Many pages use other data, so the Truth Sheet may be missing or wrong for some fields. Evaluate it per field before trusting it.
+2. **Product Context (Markdown)**: Distilled main content of the page. Use for any field when the Truth Sheet is missing, incomplete, or unreliable for that field.
+3. **Product JSON-LD**: Array of all schema.org JSON-LD scripts from the page (Product, ProductGroup, Organization, BreadcrumbList, etc.). Use the block(s) that contain product data; price may be in offers or hasVariant[].offers.
+4. **Verified Media**: Image URLs that passed quality gates. Prefer these for image_urls.
+5. **Image Candidates**: Page image URLs that passed the non-product path filter. Use when Verified Media is empty.
+6. **Image Metadata**: Optional per-image hints (alt text, OpenGraph source, or structured-data origin) keyed by URL, to help distinguish true product photos from brand or certification logos.
 
 # Instructions
-- **Reconciliation**: If the Truth Sheet is missing a field (e.g., 'material'), find it in the Markdown.
-- **Image Selection**: Populate image_urls from Verified Media when non-empty. When Verified Media is empty, choose from Image Candidates (and/or truth sheet image_urls / variant image_url). Only include product imagery—never marketing, banner, or email-signup. The pipeline will strip non-product URLs. 
+- **Judge the Truth Sheet first (for every field)**: Before using the Truth Sheet for price, name, brand, images, etc., evaluate whether it is complete and reliable for this page. Use the Truth Sheet for a field only when it passes that bar; when it's missing, empty, or clearly wrong for the page, use Product Context (Markdown) or other inputs instead. Do this evaluation for every field—not only when the Truth Sheet looks obviously sparse.
+- **Reconciliation**: Fill any field from Product Context when the Truth Sheet doesn't provide good data for that field. Do not default to zero or empty when the page clearly has the information in Markdown.
+- **Sanity-check every field**: For each output field (name, price, category, brand, etc.), if the value from one input looks wrong—e.g. an ID instead of a label (numeric-only category), a placeholder, or clearly not user-facing—ignore it and resolve that field from other inputs (Truth Sheet, JSON-LD, Embedded JSON, Product Context). Prefer human-readable, display-ready values over raw IDs or internal codes.
+- **Image Selection**: Populate image_urls from Verified Media when non-empty; when empty, choose from Image Candidates (and/or truth sheet image_urls / variant image_url). **Prioritize PRODUCT-ONLY images** (product on clean/white background; no models or lifestyle). Exclude marketing, banner, email-signup imagery, and **exclude partner/certification logos and third-party brand logos**—include only images that show the product itself. Use the `image_metadata` hints (alt text or source labels) to prefer images whose hints describe the product (e.g. “Miller Cotton Lyocell Trousers”) over those that look like logos, badges, or social/shipping icons. **Backfill**: If the product has no image_urls but one or more variants have image_url, set image_urls from those variant image_url(s) (e.g. include the first variant’s image_url so the base product has at least one image).
 - **Formatting**: Output ONLY valid JSON. No prose.
-- **Constraint**: If a value is not found in either source, return `null`. Do not hallucinate.
+- **Constraint**: For critical fields (**name**, **price**, **description**), if a value is not found in any input, return `null` and do **not** invent it. For high-level display fields (e.g. **category**, **brand**, **key_features**), you may make conservative, well-supported inferences from the product name, description, headings, or breadcrumbs when structured data is missing or clearly wrong, but prefer explicit labels when they exist.
 
 # Schema Requirements
 {
@@ -38,6 +42,8 @@ You are a Senior Data Integrity Agent. Your task is to reconcile raw web extract
 }
 
 # Input Data
+For each field, use the Truth Sheet only when it is present and reliable; otherwise use Product Context (Markdown).
+
 <truth_sheet>
 {{truth_sheet}}
 </truth_sheet>
@@ -46,6 +52,10 @@ You are a Senior Data Integrity Agent. Your task is to reconcile raw web extract
 {{markdown}}
 </product_context>
 
+<product_json_ld>
+{{product_json_ld}}
+</product_json_ld>
+
 <verified_media>
 {{verified_images}}
 </verified_media>
@@ -53,6 +63,10 @@ You are a Senior Data Integrity Agent. Your task is to reconcile raw web extract
 <image_candidates>
 {{image_candidates}}
 </image_candidates>
+
+<image_metadata>
+{{image_metadata}}
+</image_metadata>
 
 # Response
 """
@@ -70,8 +84,10 @@ async def run_pipeline(html_path: str):
 
     truth_sheet = context["truth_sheet"]
     markdown = context["md_content"]
+    product_json_ld = context.get("product_json_ld", [])
     verified_images = media["images"]
     image_candidates = media.get("candidates", [])
+    image_metadata = media.get("candidate_metadata", [])
 
     try:
         response = await ai.responses(
@@ -82,8 +98,10 @@ async def run_pipeline(html_path: str):
                     "content": ai_instructions
                         .replace("{{truth_sheet}}", str(truth_sheet))
                         .replace("{{markdown}}", markdown)
+                        .replace("{{product_json_ld}}", json.dumps(product_json_ld))
                         .replace("{{verified_images}}", str(verified_images))
                         .replace("{{image_candidates}}", str(image_candidates))
+                        .replace("{{image_metadata}}", json.dumps(image_metadata))
                 }
             ],
             text_format=Product
@@ -97,7 +115,6 @@ async def run_pipeline(html_path: str):
     if not response.image_urls and truth_sheet.get("image_urls"):
         response = response.model_copy(update={"image_urls": truth_sheet["image_urls"][:1]})
 
-    response = normalize_product_image_urls(response)
     return response
 
 
