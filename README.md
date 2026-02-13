@@ -1,5 +1,5 @@
 ```markdown
-# Travis's Submission for Channel3 Take Home Assignment
+# Web scraper for collecting product data off of website (site agnostic)
 
 Product extraction pipeline: HTML → structured Product JSON.
 
